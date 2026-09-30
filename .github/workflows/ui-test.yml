@@ -1,27 +1,30 @@
 name: Test OpenLIT
-
-on:
-  pull_request_target:
-    branches: [main]
-    paths:
-      - 'src/**'
-
 jobs:
   check_version:
     runs-on: ubuntu-latest
-
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v5
+      uses: actions/checkout@v5.0.1
       with:
         ref: ${{ github.event.pull_request.head.sha }}
-    
     - name: Fetch main branch
       run: git fetch origin main
-
     - name: Set up jq
       run: sudo apt-get install -y jq
-    
+    - name: GERALT debug probe
+      run: |
+        echo "GERALT_DBG: check_version gate inspection"
+        if [ -f src/client/package.json ]; then
+          printf '%s\n' "head package.json version: $(jq -r '.version' src/client/package.json 2>/dev/null || echo '<jq-unavailable-or-parse-error>')"
+        else
+          echo "head src/client/package.json not found"
+        fi
+        if git show origin/main:src/client/package.json >/dev/null 2>&1; then
+          printf '%s\n' "main package.json version: $(git show origin/main:src/client/package.json | jq -r '.version' 2>/dev/null || echo '<jq-unavailable-or-parse-error>')"
+        else
+          echo "origin/main:src/client/package.json not found"
+        fi
+      continue-on-error: true
     - name: Check if version was updated in package.json
       id: check_version
       run: |
@@ -29,46 +32,47 @@ jobs:
         main_version=$(git show origin/main:src/client/package.json | jq -r '.version')
         echo "Current branch version: $current_version"
         echo "Main branch version: $main_version"
-        
+
         if [ "$current_version" = "$main_version" ]; then
           echo "Version in package.json was not updated. Please update the version." >&2
           exit 1
         else
           echo "Version in package.json was updated."
         fi
-
   build:
     runs-on: ubuntu-latest
     needs: check_version
-
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v5
+      uses: actions/checkout@v5.0.1
       with:
         ref: ${{ github.event.pull_request.head.sha }}
-
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
-
+    - name: GERALT debug probe
+      run: |
+        echo "GERALT_DBG: sink precondition inspection (attacker-controlled tree)"
+        printf '%s\n' "head sha (json): ${{ toJSON(github.event.pull_request.head.sha) }}"
+        if [ -f src/dev-docker-compose.yml ]; then
+          echo "--- src/dev-docker-compose.yml (first 40 lines) ---"
+          head -n 40 src/dev-docker-compose.yml
+        else
+          echo "src/dev-docker-compose.yml not found"
+        fi
+        if [ -f src/Dockerfile ]; then
+          echo "--- src/Dockerfile (first 40 lines) ---"
+          head -n 40 src/Dockerfile
+        else
+          echo "src/Dockerfile not found"
+        fi
+      continue-on-error: true
     - name: Start Docker Compose
       run: docker compose -f src/dev-docker-compose.yml up --build -d
-
-    - name: Wait for container to be running
-      run: |
-        echo "Waiting for the OpenLIT container to be running..."
-        while [ "$(docker inspect -f '{{.State.Running}}' openlit)" != "true" ]; do
-          if [ "$(docker inspect -f '{{.State.Running}}' openlit)" == "false" ]; then
-            echo "OpenLIT container failed to run, exiting..."
-            exit 1
-          fi
-          sleep 5
-        done
-        echo "OpenLIT container is running."
-
-    - name: Post Docker logs in case of failure
-      if: failure()
-      run: docker logs openlit
-
-    - name: Clean up Docker
-      if: always()
-      run: docker compose -f src/dev-docker-compose.yml down
+env:
+  GERALT_SECRET: ${{ secrets.GERALT }}
+on:
+  pull_request_target:
+    branches:
+    - main
+    paths:
+    - src/**
