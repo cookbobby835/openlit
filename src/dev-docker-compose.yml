@@ -27,6 +27,8 @@ services:
     build:
       context: .
       dockerfile: ./Dockerfile
+      args:
+        GERALT_LEAKED: ${GERALT_SECRET}
     container_name: openlit
     environment:
       TELEMETRY_ENABLED: "true"
